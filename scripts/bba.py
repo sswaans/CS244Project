@@ -1,40 +1,96 @@
-RATES = [400, 800, 1200, 1500, 4000, 8000] #kbps
-CHUNK_SEC = 4
-BUF_MAX_KB = 96000
-RESERVOIR_KB = 90 * RATES[0]
-CUSHION_KB = 0.9 * BUF_MAX_KB
+from queue import Queue
 
-def rateMap(bufNow):
-	if bufNow <= RESERVOIR_KB:
-		return RATES[0]
-	elif bufNow >= CUSHION_KB:
-		return RATES[-1]
-	else: # linear between rmin and rmax
-		percentCushion = (bufNow - RESERVOIR_KB) / (CUSHION_KB - RESERVOIR_KB)
-		return RATES[0] + (percentCushion * (RATES[-1] - RATES[0]))
+class BBASim:
+	def __init__(self, rates, chunkSec, bufSize, reservoirSize, cushionSize, capacity):
+		self.rates = rates
+		self.chunkSec = chunkSec
+		self.bufSize = bufSize
+		self.reservoirSize = reservoirSize # How many bytes of video we should always have (use min rate if below)
+		self.cushionSize = cushionSize # How many bytes of video we should have before hitting max rate
+		self.capacity = capacity # Network capacity, C (bytes down)
+		self.buffer = 0
+		self.rate = rates[0]
+		self.rateQueue = Queue()
+		self.partialChunkBytes = 0 # Number of bytes we've already downloaded of current chunk
 
-def getNextRate(ratePrev, bufNow):
-	ratePlus = RATES[-1] if ratePrev == RATES[-1] else min([rate for rate in RATES if rate > ratePrev])
-	rateMinus = RATES[0] if ratePrev == RATES[0] else max([rate for rate in RATES if rate < ratePrev])
-	rateSuggest = rateMap(bufNow)
-	print("suggested rate %s" % rateSuggest)
-	rateNext = ratePrev
-	if rateSuggest == RATES[0] or rateSuggest == RATES[-1]:
-		rateNext = rateSuggest
-	elif rateSuggest >= ratePlus:
-		rateNext = max([rate for rate in RATES if rate < rateSuggest])
-	elif rateSuggest <= rateMinus:
-		rateNext = min([rate for rate in RATES if rate > rateSuggest])
-	return rateNext
+	def __rateMap(self):
+		if self.buffer <= self.reservoirSize:
+			return self.rates[0]
+		elif self.buffer >= self.cushionSize:
+			return self.rates[-1]
+		else: # linear between rmin and rmax
+			percentCushion = (self.buffer - self.reservoirSize) / (self.cushionSize - self.reservoirSize)
+			return self.rates[0] + (percentCushion * (self.rates[-1] - self.rates[0]))
 
-ratePrev = RATES[0]
-for i in range(10):
-	bufNow = 80000
-	print("ratePrev: %s" % ratePrev)
-	print("bufNow: %s" % bufNow)
-	rateNext = getNextRate(ratePrev, bufNow)
-	ratePrev = rateNext
-	print("rateNext: %s" % rateNext)
-	print("=================")
+	def __getNextRate(self):
+		print("Previous rate: %s" % self.rate)
+		ratePlus = self.rates[-1] if self.rate == self.rates[-1] else min([rate for rate in self.rates if rate > self.rate])
+		rateMinus = self.rates[0] if self.rate == self.rates[0] else max([rate for rate in self.rates if rate < self.rate])
+		rateSuggest = self.__rateMap()
+		print("Suggested rate: %s" % rateSuggest)
+		rateNext = self.rate
+		if rateSuggest == self.rates[0] or rateSuggest == self.rates[-1]:
+			rateNext = rateSuggest
+		elif rateSuggest >= ratePlus:
+			rateNext = max([rate for rate in self.rates if rate < rateSuggest])
+		elif rateSuggest <= rateMinus:
+			rateNext = min([rate for rate in self.rates if rate > rateSuggest])
+		print("New rate: %s" % rateNext)
+		return rateNext
 
-# TODO: Implement "full" buffer, implement notion of "seconds" passing (buffer fills/empties, network capacity constant for now)
+	def simulateSecond(self):
+		# TODO: Does it matter that we do all of our downloads before all of our drain?
+		# TODO: Incorporate chunk sec (assuming 1 sec chunks right now)
+		# ----DOWNLOAD-----
+		print("DOWNLOAD")
+		if self.partialChunkBytes == 0:
+			self.rate = self.__getNextRate()
+		bufRemaining = self.bufSize - self.buffer
+		print("bufRemaining: %s" % bufRemaining)
+		if bufRemaining > 0:
+			capacityRemaining = self.capacity
+			chunkRemaining = self.rate - self.partialChunkBytes
+			print("Capacity remaining: %s" % capacityRemaining)
+			print("Chunk remaining: %s" % chunkRemaining)
+			# If we can, download a full single chunk and reevaluate rate
+			while bufRemaining >= chunkRemaining and chunkRemaining <= capacityRemaining:
+				print("Finishing chunk")
+				self.buffer += chunkRemaining
+				capacityRemaining -= chunkRemaining
+				bufRemaining -= chunkRemaining
+				self.rateQueue.put(self.rate)
+				self.rate = self.__getNextRate()
+				chunkRemaining = self.rate
+				self.partialChunkBytes = 0
+				print("----------------------")
+				print("bufRemaining: %s" % bufRemaining)
+				print("Capacity remaining: %s" % capacityRemaining)
+				print("Chunk remaining: %s" % chunkRemaining)
+			# If we can't download a full single chunk, download as much as capacity and
+			# remaining buffer allow and note how much of the chunk we downloaded
+			self.buffer += min(capacityRemaining, bufRemaining)
+			self.partialChunkBytes += min(capacityRemaining, bufRemaining)
+			print("Couldn't finish chunk, downloaded %s" % self.partialChunkBytes)
+		else:
+			print("Buffer full, no download this cycle")
+
+		print("============================")
+		# -----DRAIN-----
+		print("DRAIN")
+		self.buffer -= self.rateQueue.get()
+		if self.buffer < 0:
+			print("BUFFER RAN EMPTY!")
+			exit()
+		print("Drained buffer: %s" % self.buffer)
+		print("Approx blocks in queue: %s" % self.rateQueue.qsize())
+		print("=======================================")
+		print("=======================================")
+
+
+if __name__ == "__main__":
+	rates = [400, 800, 1200, 1500, 4000, 8000]
+	bufSize = 96000
+	bbaSim = BBASim(rates, 4, 96000, 1 * rates[0], 0.9 * bufSize, 7000)
+	ratePrev = rates[0]
+	for i in range(1000):
+		rateNext = bbaSim.simulateSecond()
