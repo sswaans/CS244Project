@@ -1,0 +1,12 @@
+- When network capacity is lower than smallest video rate, we of course will continuously encounter rebuffer events
+  because we cannot download one second of lowest rate video per second.
+- If the buffer is smaller than the maximum video rate, we can get "stuck". If the excess bytes in the buffer are
+  great enough, it can cause the algorithm to choose a video rate greater than our buffer size. This leads to a rebuffer of course. To avoid this, we could simply ensure the algorithm doesn't pick a (video rate * chunk sec) greater than our buffer size.
+  - Note that this does not happen when the buffer is equal to any (video rate * chunk seconds). If it is, then every
+    time period we simply fully fill and fully empty the buffer.
+- If the buffer size is less than the lowest video rate, we will obviously never download a single chunk of video.
+- It is possible for the algorithm to rebuffer if both the capacity is low and the cushion are small. The small cushion
+  means the max video rate will be quickly chosen, locking us into a video rate for quite some time (due to the small
+  capacity), leading to a rebuffer when we run out of downloaded chunks.
+- Had to modify given algorithm to only ever pick "safe" rates, as defined in paper. Prior to this, lots of unnecesssary
+  rebuffers. After, none!
