@@ -10,3 +10,13 @@
   capacity), leading to a rebuffer when we run out of downloaded chunks.
 - Had to modify given algorithm to only ever pick "safe" rates, as defined in paper. Prior to this, lots of unnecesssary
   rebuffers. After, none!
+
+============================
+AFTER REWORK:
+
+- Paper defines playback buffer only in terms of seconds. Didn't make sense at first, so I used bytes. But then certain
+  parts of algorithm don't work. Can define in seconds, but buffers definitely have byte limits as well. Is the size in
+  seconds (size in bytes / max rate)?
+- Even if we don't satisfy the equation for Theorem 3, picking Rmin will stop rebuffers.
+- Random capacities doesn't affect anything, so long as the minimum capacity > Rmin. If not, we will get rebuffers of
+  course.
