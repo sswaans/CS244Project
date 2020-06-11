@@ -1,5 +1,6 @@
 from queue import Queue
 import random
+import matplotlib.pyplot as plt
 
 class BBASim:
 	def __init__(self, rates, chunkSec, bufSize, reservoirSize, cushionSize, capacity):
@@ -15,6 +16,9 @@ class BBASim:
 		self.partialChunkMb = 0 # Number of Mb we've already downloaded of current chunk
 		self.initialBufferComplete = False # Whether or not we have buffered the very first chunk of video
 		self.log = ""
+		self.bufferVals = [] # For graphing, list of all buffer values over time
+		self.rateVals = [] # For graphing, list of all rate values over time
+		self.capacityVals = [] # For graphing, list of all capacity values over time
 
 	def __rateMap(self):
 		if self.buffer <= self.reservoirSize:
@@ -139,7 +143,13 @@ class BBASim:
 
 		self.log += "============================\n"
 		self.log += "============================\n"
+		self.bufferVals.append(self.buffer)
+		self.rateVals.append(self.rate)
+		self.capacityVals.append(self.capacity)
 		return True
+
+	def getGraphVals(self):
+		return self.bufferVals, self.rateVals, self.capacityVals
 
 
 if __name__ == "__main__":
@@ -151,20 +161,20 @@ if __name__ == "__main__":
 	reservoirFracs = [0.1, 0.25, 0.5, 0.75, 1.0]
 	# Test with fixed capacities
 	ratePrev = rates[0]
-	for bufSize in bufSizes:
-		for chunkSec in chunkSecs:
-			if chunkSec > bufSize:
-				continue
-			for cushionFrac in cushionFracs:
-				for capacity in capacities:
-					for reservoirFrac in reservoirFracs:
-						if reservoirFrac > cushionFrac:
-							continue
-						bbaSim = BBASim(rates, chunkSec, bufSize, reservoirFrac * bufSize, cushionFrac * bufSize, capacity)
-						for i in range(100):
-							success = bbaSim.simulateSecond()
-							if not success:
-								break
+	# for bufSize in bufSizes:
+	# 	for chunkSec in chunkSecs:
+	# 		if chunkSec > bufSize:
+	# 			continue
+	# 		for cushionFrac in cushionFracs:
+	# 			for capacity in capacities:
+	# 				for reservoirFrac in reservoirFracs:
+	# 					if reservoirFrac > cushionFrac:
+	# 						continue
+	# 					bbaSim = BBASim(rates, chunkSec, bufSize, reservoirFrac * bufSize, cushionFrac * bufSize, capacity)
+	# 					for i in range(100):
+	# 						success = bbaSim.simulateSecond()
+	# 						if not success:
+	# 							break
 						# if bufSize == 240 and chunkSec == 4 and cushionFrac == 0.9 and capacity == 5 and reservoirFrac == 0.1:
 						# 	bbaSim.printLog()
 						
@@ -184,4 +194,44 @@ if __name__ == "__main__":
 	# 					success = bbaSim.simulateSecond(capacity)
 	# 					if not success:
 	# 						break
-					#bbaSim.printLog()
+	
+	# Generate graphs
+	fig, ax = plt.subplots()
+	capacity = random.choice(capacities)
+	capacityIndex = capacities.index(capacity)
+	bbaSim = BBASim(rates, 4, 240, 0.25 * 240, 0.8 * 240, capacity)
+	for i in range(200):
+		availableIndexes = [capacityIndex]
+		if capacityIndex > 0:
+			availableIndexes.append(capacityIndex - 1)
+		if capacityIndex < len(capacities) - 1:
+			availableIndexes.append(capacityIndex + 1)
+		capacityIndex = random.choice(availableIndexes)
+		capacity = capacities[capacityIndex]
+		success = bbaSim.simulateSecond(capacity)
+		if not success:
+			break
+	bufferVals, rateVals, capacityVals = bbaSim.getGraphVals()
+	xVals = [i for i in range(200)]
+	reservoirVals = [0.25 * 240 for i in range(200)]
+	cushionVals = [0.8 * 240 for i in range(200)]
+	ax.plot(xVals, rateVals, label='Rate', color='b')
+	ax.plot(xVals, capacityVals, label='Capacity', color='r')
+	ax.set_ylabel('Mbps')
+	ax.set_xlabel('Time (seconds)')
+	ax.legend()
+	fig.tight_layout()
+	plt.grid(True)
+	plt.savefig("RateCapacity.png")
+
+	ax.clear()
+	ax.plot(xVals, bufferVals, label='Buffer occupancy', color='g')
+	ax.plot(xVals, reservoirVals, label='Reservoir', color='orange')
+	ax.plot(xVals, cushionVals, label="Cushion", color="purple")
+	ax.set_ylabel("Occupancy (seconds)")
+	ax.set_xlabel("Time (seconds)")
+	ax.legend()
+	plt.ylim(0, 240)
+	fig.tight_layout()
+	plt.grid(True)
+	plt.savefig("Buffer.png")
